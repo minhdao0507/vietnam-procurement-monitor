@@ -1,0 +1,35 @@
+# Case interview & presentation files
+*.pdf
+*.pptx
+*.rar
+*.zip
+*.csv
+
+# Old crawlers & unrelated scripts
+crawl_masothue*.py
+crawl_gmatclub*.py
+crawl_dautucong/
+crawl/
+output_*/
+build_nb.py
+create_slides*.py
+entity_resolution.ipynb
+final/
+onboarding/
+Note*.txt
+case_data*.csv
+README_masothue_crawler.md
+presentation_script.md
+presentation_script.pdf
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# apple_monitor secrets (also covered by apple_monitor/.gitignore)
+apple_monitor/apple_monitor_config.py
+apple_monitor/google_service_account.json
+apple_monitor/monitor.log
+apple_monitor/*.xlsx

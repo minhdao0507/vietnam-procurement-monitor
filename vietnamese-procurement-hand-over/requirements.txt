@@ -1,0 +1,7 @@
+requests
+gspread
+google-auth
+google-genai
+openpyxl
+urllib3
+playwright
