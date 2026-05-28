@@ -2,6 +2,7 @@ requests
 gspread
 google-auth
 google-genai
+google-api-python-client
 openpyxl
 urllib3
 playwright

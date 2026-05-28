@@ -26,7 +26,9 @@ except ImportError:
 
 CONFIG_FILE = Path(__file__).parent / "apple_monitor_config.py"
 PORTAL_URL  = "https://muasamcong.mpi.gov.vn/web/guest/contractor-selection?render=index"
-STABLE_COOKIES = {"NSC_WT_QSE_QPSUBM_NTD_NQJ"}
+# JSESSIONID is from an authenticated browser session — never overwrite automatically.
+# Only refresh it manually when goods endpoint stops returning data.
+STABLE_COOKIES = {"NSC_WT_QSE_QPSUBM_NTD_NQJ", "JSESSIONID", "LFR_SESSION_STATE_20103"}
 
 
 async def _capture(timeout_ms: int = 40_000) -> dict:
@@ -126,16 +128,7 @@ def _patch_config(token: str, cookies: dict) -> None:
     new_block = f"API_TOKEN = (\n    {inner}\n)"
     text = re.sub(r"API_TOKEN\s*=\s*\([^)]+\)", new_block, text, flags=re.DOTALL)
 
-    # Update only the session cookies that change (leave stable ones untouched)
-    for key, val in cookies.items():
-        if key in STABLE_COOKIES:
-            continue
-        if key in ("JSESSIONID", "LFR_SESSION_STATE_20103"):
-            text = re.sub(
-                rf'"{re.escape(key)}":\s*"[^"]*"',
-                f'"{key}":                  "{val}"',
-                text,
-            )
+    # Update only analytics/non-auth cookies (JSESSIONID preserved — see STABLE_COOKIES)
 
     CONFIG_FILE.write_text(text, encoding="utf-8")
     print(f"  Config patched: {CONFIG_FILE.name}")

@@ -17,6 +17,7 @@ import json
 import random
 import smtplib
 import urllib3
+import urllib.parse
 from datetime import datetime, date, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -32,6 +33,8 @@ import requests
 import gspread
 from google import genai
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build as _drive_build
+from googleapiclient.http import MediaIoBaseUpload
 
 urllib3.disable_warnings()
 
@@ -69,7 +72,7 @@ SHEET_COLS = [
     "publicDate", "bidCloseDate", "priceInit",
     "bidForm", "bidMode", "status",
     "analysis", "crawled_at", "source_url",
-    "winner", "winner_price",
+    "winner", "winner_price", "goods_url",
 ]
 
 STATUS_MAP = {
@@ -199,7 +202,7 @@ def _build_source_url(item):
         f"&id={_p(uid)}"
         f"&notifyId={_p(uid)}"
         f"&inputResultId={_p(item.get('inputResultId'))}"
-        f"&bidOpenId=undefined&techReqId=undefined"
+        f"&bidOpenId={_p(item.get('bidOpenId'))}&techReqId=undefined"
         f"&bidPreNotifyResultId=undefined&bidPreOpenId=undefined"
         f"&processApply={_p(item.get('processApply'))}"
         f"&bidMode={_p(item.get('bidMode'))}"
@@ -247,6 +250,7 @@ def flatten(item, keyword):
         "source_url":   _build_source_url(item),
         "winner":       winner,
         "winner_price": winner_price,
+        "goods_url":    "",
     }
 
 
@@ -544,17 +548,17 @@ def _write_sheet(ws, records):
             status_display,                     # 10 Status
             r.get("winner", ""),                # 11 Winner
             award_b,                            # 12 Award (B VND)
-            r.get("bidForm", ""),              # 13 Bid Form
-            r.get("keyword", ""),              # 14 Keyword
-            r.get("analysis", ""),             # 15 AI Analysis
-            r.get("source_url", ""),           # 16 Link
+            r.get("bidForm", ""),               # 13 Bid Form
+            r.get("keyword", ""),               # 14 Keyword
+            r.get("analysis", ""),              # 15 AI Analysis
+            r.get("source_url", ""),            # 16 Link
         ]
 
         fill = urgent_fill if (days is not None and 0 <= days <= 5) \
                else (alt_fill if row_idx % 2 == 0 else normal_fill)
         ws.row_dimensions[row_idx].height = 60
 
-        link_col = len(COLUMNS)  # last column = Link (col 16)
+        from openpyxl.worksheet.hyperlink import Hyperlink
         for col_idx, value in enumerate(row_data, 1):
             cell           = ws.cell(row=row_idx, column=col_idx, value=_clean(value))
             cell.border    = border
@@ -566,8 +570,7 @@ def _write_sheet(ws, records):
                 cell.number_format = '#,##0.00'
             if col_idx == 9 and isinstance(value, int):
                 cell.font = Font(bold=True, color="C62828" if 0 <= value <= 5 else "202124")
-            if col_idx == link_col and value:
-                from openpyxl.worksheet.hyperlink import Hyperlink
+            if col_idx == 16 and value:
                 cell.value     = "View on Portal"
                 cell.hyperlink = Hyperlink(ref=cell.coordinate, target=value)
                 cell.font      = Font(color="1155CC", underline="single")
@@ -644,36 +647,220 @@ def send_email(records, all_records=None, recipients=None, note_html="", subject
 
 # ── Status refresh ────────────────────────────────────────────
 
+# ── Goods list helpers ─────────────────────────────────────────
+
+_ENDPOINT_LDT = "/o/egp-portal-contractor-selection-v2/services/expose/contractor-input-result/get"
+_ENDPOINT_VK  = "/o/egp-portal-contractor-selection-v2/services/expose/kqlcnt/bid-notify-contractor-out/get-by-id"
+
+
+def _url_param(source_url, param):
+    val = urllib.parse.parse_qs(urllib.parse.urlparse(source_url).query).get(param, [""])[0]
+    return "" if val == "undefined" else val
+
+
+def _fetch_goods_items(session, input_result_id, process_apply="LDT"):
+    endpoint = _ENDPOINT_VK if process_apply == "VK" else _ENDPOINT_LDT
+    url = f"{BASE_URL}{endpoint}?token={API_TOKEN}"
+    try:
+        resp = session.post(url, json={"id": input_result_id}, verify=False, timeout=20)
+        if resp.status_code != 200:
+            return []
+        dto  = resp.json().get("bideContractorInputResultDTO", {})
+        lots = dto.get("lotResultDTO", [])
+        if not lots:
+            return []
+        gs_raw = lots[0].get("goodsList") or ""
+        if not gs_raw:
+            return []
+        gs    = json.loads(gs_raw)
+        table = gs[0].get("formValue", {}).get("lotContent", {}).get("Table", [])
+        return table if isinstance(table, list) else []
+    except Exception:
+        return []
+
+
+def _create_goods_excel(items, bid_name, notify_no, winner=""):
+    from openpyxl.styles import Font as XFont, PatternFill as XFill, Alignment as XAlign
+    wb  = openpyxl.Workbook()
+    ws  = wb.active
+    ws.title = "Danh muc hang hoa"
+
+    for text in [f"Gói thầu: {bid_name}", f"Số thông báo: {notify_no}",
+                 f"Nhà thầu trúng: {winner}" if winner else None, None]:
+        if text is not None:
+            ws.append([text])
+        else:
+            ws.append([])
+
+    headers = ["STT", "Tên hàng hóa", "Nhãn hiệu", "Model / Mã hàng",
+               "Số lượng", "ĐVT", "Xuất xứ", "Đơn giá (VND)", "Thành tiền (VND)", "Thông số kỹ thuật"]
+    ws.append(headers)
+    hrow = ws.max_row
+    hfill = XFill(fill_type="solid", fgColor="1a73e8")
+    for cell in ws[hrow]:
+        cell.font      = XFont(bold=True, color="FFFFFF")
+        cell.fill      = hfill
+        cell.alignment = XAlign(wrap_text=True, horizontal="center", vertical="center")
+
+    for i, item in enumerate(items, 1):
+        brand = item.get("labelGood") or item.get("lableGood") or item.get("manufacturer", "")
+        feat  = (item.get("feature") or "")[:1000]
+        ws.append([
+            i,
+            item.get("name", ""),
+            brand,
+            item.get("codeGood") or item.get("model", ""),
+            item.get("qty", ""),
+            item.get("uom", ""),
+            item.get("origin", ""),
+            item.get("bidPrice") or "",
+            item.get("amount")   or "",
+            feat,
+        ])
+        ws.row_dimensions[ws.max_row].height = 40
+
+    for col_idx, width in enumerate([5, 40, 18, 20, 10, 8, 12, 18, 18, 70], 1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+    for col_idx in (8, 9):
+        for row in ws.iter_rows(min_row=hrow+1, min_col=col_idx, max_col=col_idx):
+            for cell in row:
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = "#,##0"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _upload_to_drive(xlsx_bytes, filename):
+    creds   = Credentials.from_service_account_file(
+        GOOGLE_CREDENTIALS_FILE,
+        scopes=["https://www.googleapis.com/auth/drive"]
+    )
+    service = _drive_build("drive", "v3", credentials=creds, cache_discovery=False)
+    media   = MediaIoBaseUpload(
+        io.BytesIO(xlsx_bytes),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    f = service.files().create(
+        body={"name": filename},
+        media_body=media,
+        fields="id"
+    ).execute()
+    service.permissions().create(
+        fileId=f["id"],
+        body={"type": "anyone", "role": "reader"}
+    ).execute()
+    return f"https://drive.google.com/file/d/{f['id']}/view"
+
+
+def refresh_goods_urls(ws, session):
+    """Upload goods Excel to Drive for PUB_KQLCNT bids that have inputResultId but no goods_url."""
+    rows = ws.get_all_records(head=1)
+    to_process = [
+        (i + 2, r) for i, r in enumerate(rows)
+        if r.get("status") == "PUB_KQLCNT"
+        and not str(r.get("goods_url", "")).strip()
+        and _url_param(r.get("source_url", ""), "inputResultId")
+    ]
+
+    if not to_process:
+        print("  No goods URLs to refresh.")
+        return
+
+    print(f"  {len(to_process)} bids need goods upload...")
+    gc      = get_column_letter(SHEET_COLS.index("goods_url") + 1)
+    updates = []
+    done    = 0
+
+    for sheet_row, record in to_process:
+        source_url      = record.get("source_url", "")
+        input_result_id = _url_param(source_url, "inputResultId")
+        process_apply   = _url_param(source_url, "processApply") or "LDT"
+
+        # Fallback: if inputResultId missing, re-fetch bid by notifyNo to get full detail URL
+        if not input_result_id and record.get("notifyNo"):
+            try:
+                api_url = f"{BASE_URL}{API_PATH}?token={API_TOKEN}"
+                payload = [{"pageSize": 1, "pageNumber": 0, "query": [{
+                    "index": "es-contractor-selection", "keyWord": record["notifyNo"],
+                    "matchType": "all-1", "matchFields": ["notifyNo"],
+                    "filters": [{"fieldName": "type", "searchType": "in",
+                                 "fieldValues": ["es-notify-contractor"]}],
+                }]}]
+                resp  = session.post(api_url, headers=HEADERS, json=payload, verify=False, timeout=15)
+                items_api = (resp.json()[0] if isinstance(resp.json(), list) else resp.json()).get("page", {}).get("content", [])
+                if items_api:
+                    input_result_id = items_api[0].get("inputResultId") or ""
+                    process_apply   = items_api[0].get("processApply") or "LDT"
+            except Exception:
+                pass
+
+        if not input_result_id:
+            continue
+
+        items = _fetch_goods_items(session, input_result_id, process_apply)
+        if not items:
+            continue
+
+        notify_no = record.get("notifyNo", "unknown")
+        safe_name = re.sub(r"[^\w\-]", "_", notify_no)
+        filename  = f"HangHoa_{safe_name}.xlsx"
+
+        try:
+            xlsx_bytes = _create_goods_excel(
+                items,
+                bid_name  = record.get("bid_name", ""),
+                notify_no = notify_no,
+                winner    = record.get("winner", ""),
+            )
+            drive_url = _upload_to_drive(xlsx_bytes, filename)
+            updates.append({"range": f"{gc}{sheet_row}", "values": [[drive_url]]})
+            done += 1
+            print(f"    {notify_no}: {len(items)} items → {drive_url[:60]}...")
+        except Exception as e:
+            print(f"    [err] {notify_no}: {e}")
+
+        time.sleep(random.uniform(1.0, 1.5))
+
+        if len(updates) >= 50:
+            ws.spreadsheet.values_batch_update({"valueInputOption": "RAW", "data": updates})
+            updates = []
+
+    if updates:
+        ws.spreadsheet.values_batch_update({"valueInputOption": "RAW", "data": updates})
+    print(f"  Goods URLs uploaded: {done}")
+
+
 _STALE_STATUSES = {"IS_PUBLISH", "1", "OPEN_BID", "NEW", "INIT_MT", "OPEN_DXTC", "OPEN_DXKT"}
 
 
-def refresh_recently_closed(ws, session, lookback_days=14):
+def refresh_recently_closed(ws, session, lookback_days=None):
     """
-    Re-fetch status + winner + price for bids that closed in the past N days
-    and still show a stale open-like status. Called during daily run.
+    Re-fetch status + winner + price + source_url for all closed bids
+    that still show a stale open-like status (no date window — runs until resolved).
     """
-    rows = ws.get_all_records(head=1)
-    today = date.today()
-    cutoff    = str(today - timedelta(days=lookback_days))
-    today_str = str(today)
+    rows      = ws.get_all_records(head=1)
+    today_str = str(date.today())
 
     to_refresh = [
         (i + 2, r)
         for i, r in enumerate(rows)
-        if cutoff <= r.get("bidCloseDate", "") < today_str
+        if r.get("bidCloseDate", "") < today_str
         and r.get("status", "") in _STALE_STATUSES
         and r.get("notifyNo", "").strip()
     ]
 
     if not to_refresh:
-        print("  No recently-closed bids need status refresh.")
+        print("  No closed bids with stale status.")
         return
 
-    print(f"  {len(to_refresh)} recently-closed bids need refresh...")
+    print(f"  {len(to_refresh)} closed bids with stale status — refreshing...")
 
-    sc = get_column_letter(SHEET_COLS.index("status") + 1)
-    wc = get_column_letter(SHEET_COLS.index("winner") + 1)
-    pc = get_column_letter(SHEET_COLS.index("winner_price") + 1)
+    sc  = get_column_letter(SHEET_COLS.index("status") + 1)
+    wc  = get_column_letter(SHEET_COLS.index("winner") + 1)
+    pc  = get_column_letter(SHEET_COLS.index("winner_price") + 1)
+    uc  = get_column_letter(SHEET_COLS.index("source_url") + 1)
 
     url     = f"{BASE_URL}{API_PATH}?token={API_TOKEN}"
     updates = []
@@ -712,6 +899,13 @@ def refresh_recently_closed(ws, session, lookback_days=14):
             if winner and not record.get("winner", "").strip():
                 updates.append({"range": f"{wc}{sheet_row}", "values": [[winner]]})
                 updates.append({"range": f"{pc}{sheet_row}", "values": [[price]]})
+
+            # Rebuild source_url if the refreshed item has richer IDs (inputResultId, bidOpenId)
+            new_url = _build_source_url(it)
+            old_url = record.get("source_url", "")
+            if new_url != old_url and "inputResultId=undefined" not in new_url:
+                updates.append({"range": f"{uc}{sheet_row}", "values": [[new_url]]})
+
             done += 1
         except Exception as e:
             print(f"  [err] {notify_no}: {e}")
