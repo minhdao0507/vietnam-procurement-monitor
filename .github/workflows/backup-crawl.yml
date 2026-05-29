@@ -36,10 +36,7 @@ jobs:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
         run: |
           printf '%s' "$APPLE_MONITOR_CONFIG"    > apple_monitor/apple_monitor_config.py
-          printf '%s' "$GOOGLE_CREDENTIALS_JSON" > apple_monitor/credentials.json
-          # Use relative path for credentials (VM uses absolute path)
-          sed -i 's|GOOGLE_CREDENTIALS_FILE.*|GOOGLE_CREDENTIALS_FILE = "credentials.json"|' \
-              apple_monitor/apple_monitor_config.py
+          printf '%s' "$GOOGLE_CREDENTIALS_JSON" > apple_monitor/google_service_account.json
 
       - name: Refresh token
         working-directory: apple_monitor
