@@ -2,7 +2,7 @@
 
 **Owner:** Apple Vietnam team  
 **Built:** May 2026  
-**Status:** Live — runs on GCP VM `apple-monitor` (us-central1-a) via cron, 06:00 VN time daily
+**Status:** Live — GCP VM crawls at 03:00 VN, sends email at 06:00 VN; GitHub Actions hot-standby backup crawls at 03:30 VN
 
 ---
 
@@ -28,26 +28,40 @@ An automated pipeline that monitors Vietnam's national government e-procurement 
 **End-to-end flow:**
 
 ```
+03:00 VN — GCP VM (primary)          03:30 VN — GitHub Actions (backup)
+        │                                      │
+        └──────────────┬────────────────────────┘
+                       │  both run same crawl path
+                       ▼
 muasamcong.mpi.gov.vn (Vietnam national procurement portal)
         │
-        ▼  crawl 21 keywords every 2h
-[token_refresh.py]  ←  headless Chrome auto-refreshes session token
+        ▼
+[token_refresh.py]  ←  headless Chromium auto-refreshes session token
         │
         ▼
-[apple_monitor.py]  ←  fetch all pages per keyword, deduplicate
+[apple_monitor.py crawl]  ←  fetch all pages per keyword, deduplicate
         │
         ▼  only new bids (not seen before)
-[Google Sheets]     ←  permanent database (11,400+ records and growing)
+[Google Sheets]     ←  permanent database (11,500+ records and growing)
         │
         ▼  active bids only (deadline not passed)
-[Gemini 2.5 Flash Lite]  ←  AI analysis per bid
+[Gemini Flash]      ←  AI analysis per bid
         │
+        ▼  also refreshes 200 most-recent stale bids per run
+[Google Sheets]     ←  updated winner / award price for closed bids
+
+06:00 VN — GCP VM run_monitor.py
+        │  reads today's Sheet records (send-only, no crawl)
         ▼
-[Gmail SMTP]        ←  email alert to 5 recipients
+[Gmail SMTP]        ←  email to recipients
         + Excel attachment: Tab 1 = All Active, Tab 2 = Full Archive
 ```
 
-**Schedule:** 06:00 daily (GCP VM cron, `0 23 * * *` UTC)
+**Schedule:**
+
+- 03:00 VN (`0 20 * * *` UTC) — VM crawl via `run_crawl.py`
+- 03:30 VN (`30 20 * * *` UTC) — GitHub Actions backup crawl
+- 06:00 VN (`0 23 * * *` UTC) — VM email via `run_monitor.py`
 
 **Recipients:** _(configured in `apple_monitor_config.py` — not committed)_
 
@@ -62,7 +76,7 @@ muasamcong.mpi.gov.vn (Vietnam national procurement portal)
 | **Deduplication** | Google Sheets API (`gspread`) | Prevents duplicate alerts across runs |
 | **AI Analysis** | Gemini 2.5 Flash Lite (paid tier) | Summarizes each new bid: product, value, deadline, priority |
 | **Email delivery** | Gmail SMTP + `openpyxl` | Sends HTML alert email + Excel attachment |
-| **Scheduler** | GCP VM cron (`apple-monitor`, us-central1-a) | Daily at 23:00 UTC = 06:00 VN time |
+| **Scheduler** | GCP VM cron + GitHub Actions | VM: 20:00 UTC (crawl) + 23:00 UTC (email); GH Actions: 20:30 UTC (backup crawl) |
 
 ---
 
@@ -70,15 +84,19 @@ muasamcong.mpi.gov.vn (Vietnam national procurement portal)
 
 ```
 apple_monitor/
-├── apple_monitor.py          # Main pipeline (crawl → dedup → analyze → email)
-├── apple_monitor_config.py   # All credentials and settings (keep secret)
-├── token_refresh.py          # Auto-refresh muasamcong session token via Chrome
-├── run_monitor.py            # Entry point: calls token_refresh then apple_monitor
-├── run_monitor.bat           # Windows batch wrapper, writes to monitor.log
-├── send_catchup.py           # One-time catch-up email (e.g. for new recipients)
-├── requirements.txt          # Python dependencies
-├── google_service_account.json  # Google Cloud service account (keep secret)
-└── monitor.log               # Runtime log written by run_monitor.bat
+├── apple_monitor.py              # Main pipeline (crawl → dedup → analyze → sheet)
+├── apple_monitor_config.py       # All credentials and settings (keep secret)
+├── token_refresh.py              # Auto-refresh muasamcong session token via Chrome
+├── run_crawl.py                  # 03:00 VN entry point: token refresh + crawl; alert email on failure
+├── run_monitor.py                # 06:00 VN entry point: read Sheet, send email (no crawl)
+├── send_catchup.py               # One-time catch-up email (e.g. for new recipients)
+├── requirements.txt              # Python dependencies
+├── google_service_account.json   # Google Cloud service account (keep secret)
+└── monitor.log                   # Runtime log
+
+.github/
+└── workflows/
+    └── backup-crawl.yml          # GitHub Actions backup crawl at 03:30 VN
 ```
 
 ---
@@ -200,7 +218,7 @@ The portal requires a browser session token (`API_TOKEN`) + cookies (`JSESSIONID
 - **Pagination:** 50 records per page, iterates all pages per keyword with 1.5–3.0s random delay
 - **Deduplication:** Two-tier — cross-run via Google Sheet IDs + cross-keyword via in-memory `seen_ids` set
 - **Analysis:** Only active bids (deadline not passed) are sent to Gemini, to conserve API calls
-- **Status tracking:** `refresh_recently_closed()` re-fetches status/winner/award price for bids that closed in the last 14 days and still show a stale status — runs on every daily crawl
+- **Status tracking:** `refresh_recently_closed()` re-fetches status/winner/award price for the 200 most-recently-closed stale bids per run (sorted newest first; backlog of ~3,500 clears in ~17 days)
 - **Status map:** English labels — `Open`, `Bidding Open`, `Under Evaluation`, `Technical Evaluation`, `Result Published`, `Invitation Published`, `Cancelled`
 - **Number formatting:** Prices displayed as `1,50B VND` (Vietnamese decimal) in email; Excel cells use `#,##0.00` format
 - **Error handling:**
@@ -225,7 +243,9 @@ python send_catchup.py
 
 | Task | Schedule | Host | Command |
 | ---- | -------- | ---- | ------- |
-| Daily crawl | 23:00 UTC (06:00 VN) | GCP VM `apple-monitor` | `cron: cd /home/dphm57/apple_monitor && python3 run_monitor.py` |
+| Crawl + token refresh | 20:00 UTC (03:00 VN) | GCP VM `apple-monitor` | `python3 run_crawl.py` |
+| Email send | 23:00 UTC (06:00 VN) | GCP VM `apple-monitor` | `python3 run_monitor.py` |
+| Backup crawl | 20:30 UTC (03:30 VN) | GitHub Actions | `python apple_monitor.py crawl` |
 
 **VM details:** `apple-monitor`, us-central1-a, e2-micro (Always Free tier)
 
@@ -237,7 +257,10 @@ python send_catchup.py
 # View recent log
 tail -100 /home/dphm57/apple_monitor/monitor.log
 
-# Run manually
+# Run crawl manually
+cd /home/dphm57/apple_monitor && python3 run_crawl.py
+
+# Send email manually (uses today's Sheet data, no crawl needed)
 cd /home/dphm57/apple_monitor && python3 run_monitor.py
 
 # Edit cron
@@ -348,7 +371,7 @@ Get-ScheduledTaskInfo -TaskName "AppleProcurementMonitor"
 
 - ~~**Cloud hosting**~~ ✅ — running on GCP VM `apple-monitor` (us-central1-a)
 - ~~**Bid status tracking**~~ ✅ — `refresh_recently_closed()` refreshes status/winner/price for last 14 days
-- **Run failure alerting** — send notification if a scheduled run fails or produces no output
+- ~~**Run failure alerting**~~ ✅ — `run_crawl.py` sends alert email + GitHub Actions backup if VM IP is blocked
 - **Semantic keyword matching** — catch bids with non-standard Apple product descriptions
 
 ### Medium-term
