@@ -835,15 +835,19 @@ def refresh_goods_urls(ws, session):
 _STALE_STATUSES = {"IS_PUBLISH", "1", "OPEN_BID", "NEW", "INIT_MT", "OPEN_DXTC", "OPEN_DXKT"}
 
 
+_MAX_REFRESH_PER_RUN = 200
+
+
 def refresh_recently_closed(ws, session, lookback_days=None):
     """
-    Re-fetch status + winner + price + source_url for all closed bids
-    that still show a stale open-like status (no date window — runs until resolved).
+    Re-fetch status + winner + price + source_url for closed bids with stale status.
+    Processes the _MAX_REFRESH_PER_RUN most-recently-closed bids per run so each
+    run stays under ~2 minutes. Backlog clears gradually across daily runs.
     """
     rows      = ws.get_all_records(head=1)
     today_str = str(date.today())
 
-    to_refresh = [
+    candidates = [
         (i + 2, r)
         for i, r in enumerate(rows)
         if r.get("bidCloseDate", "") < today_str
@@ -851,11 +855,16 @@ def refresh_recently_closed(ws, session, lookback_days=None):
         and r.get("notifyNo", "").strip()
     ]
 
+    # Prioritize most-recently-closed; cap to avoid long runs
+    candidates.sort(key=lambda x: x[1].get("bidCloseDate", ""), reverse=True)
+    to_refresh = candidates[:_MAX_REFRESH_PER_RUN]
+
     if not to_refresh:
         print("  No closed bids with stale status.")
         return
 
-    print(f"  {len(to_refresh)} closed bids with stale status — refreshing...")
+    total_stale = len(candidates)
+    print(f"  {total_stale} stale bids total — refreshing {len(to_refresh)} most recent...")
 
     sc  = get_column_letter(SHEET_COLS.index("status") + 1)
     wc  = get_column_letter(SHEET_COLS.index("winner") + 1)
@@ -1056,11 +1065,36 @@ def run_test():
     print("Done — check minh_dao@apple.com inbox.")
 
 
+def send_only():
+    """Read today's crawled records from sheet and send email (no crawling)."""
+    print(f"=== Apple Monitor (send-only) — {datetime.now().strftime('%Y-%m-%d %H:%M')} ===\n")
+
+    print("Fetching full sheet for Excel export...")
+    ws = connect_sheet()
+    all_rows = ws.get_all_records(head=1)
+    all_sheet = [{col: str(row.get(col, "")) for col in SHEET_COLS} for row in all_rows]
+    print(f"  {len(all_sheet):,} total records in sheet")
+
+    today = date.today().isoformat()
+    all_new = [r for r in all_sheet if r.get("crawled_at", "").startswith(today)]
+    print(f"  {len(all_new)} records crawled today")
+
+    if not all_new:
+        print("No records crawled today — no email sent.")
+        return
+
+    print("Sending email...")
+    send_email(all_new, all_sheet)
+    print(f"\n✓ Done — email sent with {len(all_new)} new records.")
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1].lower() if len(sys.argv) > 1 else "run"
     if cmd == "test":
         run_test()
     elif cmd == "crawl":
         run(do_send_email=False)
+    elif cmd == "send-only":
+        send_only()
     else:
         run()

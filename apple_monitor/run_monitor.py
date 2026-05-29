@@ -1,9 +1,12 @@
 """
-run_monitor.py — Entry point called by Task Scheduler (or run_monitor.bat).
+run_monitor.py — Chạy lúc 6 AM VN (23:00 UTC).
 
 Flow:
-  1. Refresh muasamcong token via Playwright (headless)
-  2. Run the full Apple Procurement Monitor pipeline
+  1. Đọc records đã crawl hôm nay từ Google Sheet
+  2. Gửi email với Excel attachment
+
+Crawl chạy riêng lúc 3 AM VN bằng run_crawl.py.
+Token không cần refresh ở đây (chỉ đọc Sheet + gửi mail).
 
 Usage:
   python run_monitor.py
@@ -29,23 +32,8 @@ def _sync_to_vm():
 
 
 def main():
-    # ── Step 1: Refresh token ──────────────────────────────────
-    print("Step 1/2 — Refreshing token...")
-    result = subprocess.run([sys.executable, str(HERE / "token_refresh.py")])
-    if result.returncode != 0:
-        print(
-            "\n[!] Token refresh failed.\n"
-            "    Fix: update API_TOKEN + JSESSIONID manually in apple_monitor_config.py\n"
-            "    then re-run:  python run_monitor.py\n"
-        )
-        sys.exit(1)
-
-    # Sync fresh token to VM
-    _sync_to_vm()
-
-    # ── Step 2: Run monitor ────────────────────────────────────
-    print("Step 2/2 — Running monitor...")
-    subprocess.run([sys.executable, str(HERE / "apple_monitor.py")], check=True)
+    print("Sending today's email...")
+    subprocess.run([sys.executable, str(HERE / "apple_monitor.py"), "send-only"], check=True)
 
 
 if __name__ == "__main__":
