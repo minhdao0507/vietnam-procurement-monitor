@@ -1,0 +1,50 @@
+name: Backup Crawl (3:30 AM VN)
+
+# Runs 30 min after the VM cron (3:00 AM VN).
+# If VM already crawled → finds 0 new records, exits in ~2 min.
+# If VM was blocked   → full crawl, data in Sheet before 6 AM send.
+# GitHub also emails the repo owner if this workflow itself fails.
+
+on:
+  schedule:
+    - cron: '30 20 * * *'   # 03:30 AM VN = 20:30 UTC
+  workflow_dispatch:          # manual trigger from GitHub UI
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apple_monitor/requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r apple_monitor/requirements.txt
+
+      - name: Install Playwright browser
+        run: playwright install chromium --with-deps
+
+      - name: Write config and credentials
+        env:
+          APPLE_MONITOR_CONFIG:   ${{ secrets.APPLE_MONITOR_CONFIG }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: |
+          printf '%s' "$APPLE_MONITOR_CONFIG"    > apple_monitor/apple_monitor_config.py
+          printf '%s' "$GOOGLE_CREDENTIALS_JSON" > apple_monitor/credentials.json
+          # Use relative path for credentials (VM uses absolute path)
+          sed -i 's|GOOGLE_CREDENTIALS_FILE.*|GOOGLE_CREDENTIALS_FILE = "credentials.json"|' \
+              apple_monitor/apple_monitor_config.py
+
+      - name: Refresh token
+        working-directory: apple_monitor
+        run: python token_refresh.py
+
+      - name: Crawl (no email)
+        working-directory: apple_monitor
+        run: python apple_monitor.py crawl
