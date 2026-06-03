@@ -77,6 +77,20 @@ def main():
         _send_alert(msg)
         sys.exit(1)
 
+    # ── Step 3: Sync fresh token to GitHub Secret ──────────────
+    print("Step 3/3 — Syncing token to GitHub Secret...")
+    config_content = (HERE / "apple_monitor_config.py").read_text(encoding="utf-8")
+    r = subprocess.run(
+        ["gh", "secret", "set", "APPLE_MONITOR_CONFIG",
+         "--repo", "minhdao0507/vietnam-procurement-monitor",
+         "--body", config_content],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0:
+        print("  GitHub Secret updated.")
+    else:
+        print(f"  [WARN] Secret sync failed (non-blocking): {r.stderr.strip()}")
+
 
 if __name__ == "__main__":
     try:
