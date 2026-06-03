@@ -255,13 +255,13 @@ bash setup.sh   # installs Python 3.11, Playwright, deps
 
 ```cron
 # 03:00 VN (20:00 UTC) — crawl + token refresh + alert on failure
-0 20 * * * cd /home/dphm57/apple_monitor && python3 run_crawl.py >> /home/dphm57/apple_monitor/monitor.log 2>&1
+0 20 * * * cd /home/<user>/apple_monitor && python3 run_crawl.py >> /home/<user>/apple_monitor/monitor.log 2>&1
 
 # 06:00 VN (23:00 UTC) — send email from today's Sheet data
-0 23 * * * cd /home/dphm57/apple_monitor && python3 run_monitor.py >> /home/dphm57/apple_monitor/monitor.log 2>&1
+0 23 * * * cd /home/<user>/apple_monitor && python3 run_monitor.py >> /home/<user>/apple_monitor/monitor.log 2>&1
 ```
 
-Logs: `/home/dphm57/apple_monitor/monitor.log`
+Logs: `/home/<user>/apple_monitor/monitor.log`
 
 To sync local changes to the VM:
 

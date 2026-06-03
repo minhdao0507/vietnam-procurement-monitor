@@ -4,6 +4,13 @@
 **Built:** May 2026  
 **Status:** Live — GCP VM crawls at 03:00 VN, sends email at 06:00 VN; GitHub Actions hot-standby backup crawls at 03:30 VN
 
+> ⚠️ **Commit checklist — KHÔNG đưa lên git:**
+> - VM external IP
+> - Tên user / home path cụ thể trên VM
+> - Email recipients (Apple employees)
+> - Bất kỳ credential, token, password, API key nào
+> - `apple_monitor_config.py`, `google_service_account.json` (đã có trong `.gitignore`)
+
 ---
 
 ## Table of Contents
@@ -218,7 +225,7 @@ Runs at 03:00 VN. Three steps:
 2. **Crawl** — runs `apple_monitor.py crawl`; exits with alert email if it fails
 3. **Secret sync** — pushes fresh `apple_monitor_config.py` to GitHub Secret `APPLE_MONITOR_CONFIG` via `gh` CLI, so the GitHub Actions backup always has an up-to-date token. Non-blocking — a failure here only prints a warning.
 
-> `gh` CLI is authenticated on the VM with a Fine-grained PAT (repo: `vietnam-procurement-monitor`, permission: `secrets:write`). PAT stored in `/home/dphm57/.config/gh/hosts.yml`.
+> `gh` CLI is authenticated on the VM with a Fine-grained PAT (repo: `vietnam-procurement-monitor`, permission: `secrets:write`). PAT stored in `~/.config/gh/hosts.yml`.
 
 ### `apple_monitor.py`
 
@@ -258,21 +265,21 @@ python send_catchup.py
 | Email send | 23:00 UTC (06:00 VN) | GCP VM `apple-monitor` | `python3 run_monitor.py` |
 | Backup crawl | 20:30 UTC (03:30 VN) | GitHub Actions | `python apple_monitor.py crawl` |
 
-**VM details:** `apple-monitor`, us-central1-a, e2-micro (Always Free tier), external IP `136.113.45.54`
+**VM details:** `apple-monitor`, us-central1-a, e2-micro (Always Free tier)
 
-**Log file:** `/home/dphm57/apple_monitor/monitor.log`
+**Log file:** `/home/<user>/apple_monitor/monitor.log`
 
 **Useful commands on VM:**
 
 ```bash
 # View recent log
-tail -100 /home/dphm57/apple_monitor/monitor.log
+tail -100 ~/apple_monitor/monitor.log
 
 # Run crawl manually
-cd /home/dphm57/apple_monitor && python3 run_crawl.py
+cd ~/apple_monitor && python3 run_crawl.py
 
 # Send email manually (uses today's Sheet data, no crawl needed)
-cd /home/dphm57/apple_monitor && python3 run_monitor.py
+cd ~/apple_monitor && python3 run_monitor.py
 
 # Edit cron
 crontab -e
@@ -281,7 +288,7 @@ crontab -e
 **Deploy updated code from Windows:**
 
 ```powershell
-gcloud compute scp "M:\Working\Apple\apple_monitor\apple_monitor.py" dphm57@apple-monitor:/home/dphm57/apple_monitor/ --zone=us-central1-a --quiet
+gcloud compute scp "apple_monitor.py" <user>@apple-monitor:~/apple_monitor/ --zone=us-central1-a --quiet
 ```
 
 ---
