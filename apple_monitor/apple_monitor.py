@@ -39,11 +39,16 @@ from googleapiclient.http import MediaIoBaseUpload
 urllib3.disable_warnings()
 
 # Strip XML-illegal control characters that openpyxl rejects
-_ILLEGAL_CHARS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F￾￿]")
+_ILLEGAL_CHARS   = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F￾￿]")
+# Characters that trigger formula/DDE injection in Excel when leading a cell
+_FORMULA_LEADERS = frozenset(("=", "+", "-", "@", "\t", "\r"))
 
 def _clean(val):
     if isinstance(val, str):
-        return _ILLEGAL_CHARS.sub("", val)
+        val = _ILLEGAL_CHARS.sub("", val)
+        if val and val[0] in _FORMULA_LEADERS:
+            val = " " + val  # prepend space — Excel treats as plain text
+        return val
     return val
 
 if sys.platform == "win32":
