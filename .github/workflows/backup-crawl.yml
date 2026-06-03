@@ -44,4 +44,8 @@ jobs:
 
       - name: Crawl (no email)
         working-directory: apple_monitor
+        env:
+          GMAIL_APP_PASSWORD:          ${{ secrets.GMAIL_APP_PASSWORD }}
+          GEMINI_API_KEY:              ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: python apple_monitor.py crawl
