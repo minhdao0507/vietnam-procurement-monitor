@@ -77,6 +77,7 @@ muasamcong.mpi.gov.vn (Vietnam national procurement portal)
 | **AI Analysis** | Gemini 2.5 Flash Lite (paid tier) | Summarizes each new bid: product, value, deadline, priority |
 | **Email delivery** | Gmail SMTP + `openpyxl` | Sends HTML alert email + Excel attachment |
 | **Scheduler** | GCP VM cron + GitHub Actions | VM: 20:00 UTC (crawl) + 23:00 UTC (email); GH Actions: 20:30 UTC (backup crawl) |
+| **Secret Manager** | GCP Secret Manager | Stores `GMAIL_APP_PASSWORD`, `GEMINI_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON` — no plaintext credentials on disk |
 
 ---
 
@@ -257,7 +258,7 @@ python send_catchup.py
 | Email send | 23:00 UTC (06:00 VN) | GCP VM `apple-monitor` | `python3 run_monitor.py` |
 | Backup crawl | 20:30 UTC (03:30 VN) | GitHub Actions | `python apple_monitor.py crawl` |
 
-**VM details:** `apple-monitor`, us-central1-a, e2-micro (Always Free tier), external IP `35.232.158.82`
+**VM details:** `apple-monitor`, us-central1-a, e2-micro (Always Free tier), external IP `136.113.45.54`
 
 **Log file:** `/home/dphm57/apple_monitor/monitor.log`
 
@@ -402,9 +403,18 @@ Get-ScheduledTaskInfo -TaskName "AppleProcurementMonitor"
 
 | Service | Purpose | Where to find credentials |
 |---|---|---|
-| muasamcong.mpi.gov.vn | Data source | Browser session (auto-refreshed) |
-| Google Sheets | Database | `GOOGLE_SHEET_ID` in config + service account JSON |
-| Google AI Studio | Gemini API | `GEMINI_API_KEY` — [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| Gmail | Email delivery | `GMAIL_APP_PASSWORD` — myaccount.google.com → Security → App Passwords |
+| muasamcong.mpi.gov.vn | Data source | Browser session (auto-refreshed daily by `token_refresh.py`) |
+| Google Sheets | Database | `GOOGLE_SHEET_ID` in config; service account JSON in Secret Manager |
+| Google AI Studio | Gemini API | Secret Manager → `GEMINI_API_KEY` |
+| Gmail | Email delivery | Secret Manager → `GMAIL_APP_PASSWORD` |
+| GCP Secret Manager | Credential store | `console.cloud.google.com` → project `apple-monitor` → Secret Manager |
 
-> **Security note:** `apple_monitor_config.py` and `google_service_account.json` contain live credentials. Do not commit these to any public repository.
+**Secrets in GCP Secret Manager (project `apple-monitor`):**
+
+| Secret name | Nội dung |
+|---|---|
+| `GMAIL_APP_PASSWORD` | Gmail App Password dùng để gửi email |
+| `GEMINI_API_KEY` | Google AI Studio API key |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Service account JSON (Sheets + Drive access) |
+
+> **Security note:** Không còn credential nào lưu plaintext trên VM. `apple_monitor_config.py` đọc credentials từ Secret Manager lúc runtime. `google_service_account.json` trên VM là bản backup — có thể xóa đi sau khi xác nhận ổn định.
