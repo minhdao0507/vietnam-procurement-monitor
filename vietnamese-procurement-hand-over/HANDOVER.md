@@ -209,6 +209,16 @@ The portal requires a browser session token (`API_TOKEN`) + cookies (`JSESSIONID
 6. If Playwright fails entirely, falls back to `_test_current_token()` — checks if the existing token in config is still valid
 7. Patches `apple_monitor_config.py` in-place with the new token + cookies
 
+### `run_crawl.py`
+
+Runs at 03:00 VN. Three steps:
+
+1. **Token refresh** — runs `token_refresh.py` via subprocess; exits with alert email if it fails
+2. **Crawl** — runs `apple_monitor.py crawl`; exits with alert email if it fails
+3. **Secret sync** — pushes fresh `apple_monitor_config.py` to GitHub Secret `APPLE_MONITOR_CONFIG` via `gh` CLI, so the GitHub Actions backup always has an up-to-date token. Non-blocking — a failure here only prints a warning.
+
+> `gh` CLI is authenticated on the VM with a Fine-grained PAT (repo: `vietnam-procurement-monitor`, permission: `secrets:write`). PAT stored in `/home/dphm57/.config/gh/hosts.yml`.
+
 ### `apple_monitor.py`
 
 **Key technical details:**
@@ -247,7 +257,7 @@ python send_catchup.py
 | Email send | 23:00 UTC (06:00 VN) | GCP VM `apple-monitor` | `python3 run_monitor.py` |
 | Backup crawl | 20:30 UTC (03:30 VN) | GitHub Actions | `python apple_monitor.py crawl` |
 
-**VM details:** `apple-monitor`, us-central1-a, e2-micro (Always Free tier)
+**VM details:** `apple-monitor`, us-central1-a, e2-micro (Always Free tier), external IP `35.232.158.82`
 
 **Log file:** `/home/dphm57/apple_monitor/monitor.log`
 
@@ -280,7 +290,7 @@ gcloud compute scp "M:\Working\Apple\apple_monitor\apple_monitor.py" dphm57@appl
 | Limitation | Impact | Suggested Fix |
 | ---------- | ------ | ------------- |
 | ~~Runs on local Windows laptop~~ ✅ | ~~Missed runs if machine is off~~ | Migrated to GCP VM |
-| Token refresh via browser automation | Can break if portal updates its frontend | Monitor and maintain; fallback is manual cURL |
+| ~~Token refresh blocked by VM IP~~ ✅ | ~~VM IP was blocked by portal~~ | VM IP changed (2026-06-03); token auto-syncs to GitHub Secret daily |
 | Keyword-based search only | May miss bids with non-standard terminology | Add fuzzy/semantic matching layer |
 | ~~No bid status tracking~~ ✅ | ~~Won't alert when a bid is cancelled/awarded~~ | `refresh_recently_closed()` implemented (14-day lookback) |
 | Email-only delivery | No CRM or workflow integration | Integrate with Salesforce or Teams/Slack |
