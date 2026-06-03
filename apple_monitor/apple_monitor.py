@@ -58,7 +58,7 @@ if sys.platform == "win32":
 from apple_monitor_config import (
     KEYWORDS,
     GMAIL_SENDER, GMAIL_APP_PASSWORD, EMAIL_RECIPIENTS,
-    GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE,
+    GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_DICT,
     GEMINI_API_KEY,
     API_TOKEN, API_COOKIES,
 )
@@ -266,7 +266,7 @@ def connect_sheet():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_FILE, scopes=scopes)
+    creds = Credentials.from_service_account_info(GOOGLE_CREDENTIALS_DICT, scopes=scopes)
     gc    = gspread.authorize(creds)
     sh    = gc.open_by_key(GOOGLE_SHEET_ID)
     try:
@@ -738,8 +738,8 @@ def _create_goods_excel(items, bid_name, notify_no, winner=""):
 
 
 def _upload_to_drive(xlsx_bytes, filename):
-    creds   = Credentials.from_service_account_file(
-        GOOGLE_CREDENTIALS_FILE,
+    creds   = Credentials.from_service_account_info(
+        GOOGLE_CREDENTIALS_DICT,
         scopes=["https://www.googleapis.com/auth/drive"]
     )
     service = _drive_build("drive", "v3", credentials=creds, cache_discovery=False)
