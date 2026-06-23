@@ -56,7 +56,7 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from apple_monitor_config import (
-    KEYWORDS,
+    INVEST_FIELDS,
     GMAIL_SENDER, GMAIL_APP_PASSWORD, EMAIL_RECIPIENTS,
     GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_DICT,
     GEMINI_API_KEY,
@@ -127,26 +127,35 @@ def make_session():
     return s
 
 
-def _build_payload(page_number, page_size, keyword):
+def _build_payload(page_number, page_size, invest_fields=None, since_date=None):
+    """
+    since_date: "YYYY-MM-DD" — chỉ lấy bids publicDate >= since_date.
+    Dùng cho daily incremental crawl để tránh crawl toàn bộ lịch sử.
+    """
+    if invest_fields is None:
+        invest_fields = INVEST_FIELDS
+    filters = [
+        {"fieldName": "investField", "searchType": "in",     "fieldValues": invest_fields},
+        {"fieldName": "type",        "searchType": "in",     "fieldValues": ["es-notify-contractor"]},
+        {"fieldName": "caseKHKQ",    "searchType": "not_in", "fieldValues": ["1"]},
+    ]
+    if since_date:
+        filters.append({"fieldName": "publicDate", "searchType": "gte", "fieldValues": [since_date]})
     return [{
         "pageSize": page_size,
-        "pageNumber": page_number,
+        "pageNumber": str(page_number),
         "query": [{
             "index": "es-contractor-selection",
-            "keyWord": keyword,
             "matchType": "all-1",
             "matchFields": ["notifyNo", "bidName"],
-            "filters": [
-                {"fieldName": "type",     "searchType": "in",     "fieldValues": ["es-notify-contractor"]},
-                {"fieldName": "caseKHKQ", "searchType": "not_in", "fieldValues": ["1"]},
-            ],
+            "filters": filters,
         }],
     }]
 
 
-def _fetch_page(session, page_number, keyword, page_size=PAGE_SIZE):
+def _fetch_page(session, page_number, invest_fields=None, page_size=PAGE_SIZE, since_date=None):
     url = f"{BASE_URL}{API_PATH}?token={API_TOKEN}"
-    payload = _build_payload(page_number, page_size, keyword)
+    payload = _build_payload(page_number, page_size, invest_fields, since_date)
     for attempt in range(3):
         try:
             resp = session.post(url, headers=HEADERS, json=payload, verify=False, timeout=20)
@@ -167,20 +176,31 @@ def _fetch_page(session, page_number, keyword, page_size=PAGE_SIZE):
     return None
 
 
-def crawl_keyword(session, keyword):
-    data = _fetch_page(session, 0, keyword)
+def crawl_categories(session, invest_fields=None, since_date=None, max_pages=40):
+    """
+    Crawl by investField category instead of keyword.
+    since_date: "YYYY-MM-DD" — filter bids publicDate >= since_date (nếu portal hỗ trợ).
+    max_pages: giới hạn số trang để tránh timeout và IP block. Default=40 (~2000 bids).
+    """
+    if invest_fields is None:
+        invest_fields = INVEST_FIELDS
+    label = "+".join(invest_fields)
+    date_note = f" since {since_date}" if since_date else ""
+
+    data = _fetch_page(session, 0, invest_fields, since_date=since_date)
     if not data:
         return []
 
     page_obj      = data.get("page", data)
-    total_pages   = page_obj.get("totalPages", 1)
+    total_pages   = min(page_obj.get("totalPages", 1), max_pages)
     total_records = page_obj.get("totalElements", 0)
-    print(f"    '{keyword}': {total_records:,} records ({total_pages} pages)")
+    capped = " (capped)" if page_obj.get("totalPages", 1) > max_pages else ""
+    print(f"    [{label}]{date_note}: {total_records:,} records — crawling {total_pages} pages{capped}")
 
     all_items = list(data.get("content") or data.get("page", {}).get("content", []))
 
     for page_num in range(1, total_pages):
-        page_data = _fetch_page(session, page_num, keyword)
+        page_data = _fetch_page(session, page_num, invest_fields, since_date=since_date)
         if not page_data:
             break
         content = page_data.get("content") or page_data.get("page", {}).get("content", [])
@@ -222,7 +242,7 @@ def _build_source_url(item):
     return f"{BASE_URL}/web/guest/contractor-selection?{params}"
 
 
-def flatten(item, keyword):
+def flatten(item, keyword="HH"):
     locs      = item.get("locations") or []
     first_loc = locs[0] if locs else {}
     bid_name  = item.get("bidName", "")
@@ -950,15 +970,18 @@ def run(do_send_email=True):
     all_new  = []
     seen_ids = set(existing_ids)
 
-    print("Crawling keywords...")
-    for keyword in KEYWORDS:
-        items = crawl_keyword(session, keyword)
-        for item in items:
-            record = flatten(item, keyword)
-            nid    = record["notifyId"]
-            if nid and nid not in seen_ids:
-                all_new.append(record)
-                seen_ids.add(nid)
+    # max_pages=40 → tối đa 2000 bids/run, ~90s, an toàn cho GitHub Actions timeout 30min
+    print(f"Crawling categories: {INVEST_FIELDS} (max 40 pages) ...")
+    items = crawl_categories(session, INVEST_FIELDS, max_pages=40)
+    for item in items:
+        invest_field = item.get("investField", "HH")
+        if isinstance(invest_field, list):
+            invest_field = invest_field[0] if invest_field else "HH"
+        record = flatten(item, invest_field)
+        nid    = record["notifyId"]
+        if nid and nid not in seen_ids:
+            all_new.append(record)
+            seen_ids.add(nid)
 
     print(f"\n→ {len(all_new)} new records found\n")
 
