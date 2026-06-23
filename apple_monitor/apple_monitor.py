@@ -1125,8 +1125,26 @@ def send_only():
     print(f"  {len(all_sheet):,} total records in sheet")
 
     today = date.today().isoformat()
-    all_new = [r for r in all_sheet if r.get("crawled_at", "").startswith(today)]
-    print(f"  {len(all_new)} records crawled today")
+    crawled_today = [r for r in all_sheet if r.get("crawled_at", "").startswith(today)]
+
+    # Filter to Apple-relevant device bids only — email is for Apple team action
+    # Category crawl (HH+HON_HOP) ingests all goods; email shows only what a partner can propose Apple for
+    _APPLE_DEV_KW = [
+        "máy tính xách tay", "laptop", "máy vi tính xách tay",
+        "máy tính bảng", "tablet", "máy vi tính bảng",
+        "máy tính để bàn", "desktop", "máy vi tính để bàn", "all-in-one",
+        "điện thoại thông minh", "smartphone", "điện thoại di động",
+        "apple", "iphone", "ipad", "macbook", "imac", "mac pro",
+        "mac mini", "mac studio", "airpods",
+        "máy tính cá nhân", "máy vi tính",
+    ]
+    def _is_apple_relevant(bid_name):
+        n = bid_name.lower()
+        return any(k in n for k in _APPLE_DEV_KW)
+
+    all_new = [r for r in crawled_today if _is_apple_relevant(r.get("bid_name", ""))]
+    skipped = len(crawled_today) - len(all_new)
+    print(f"  {len(crawled_today)} crawled today → {len(all_new)} Apple-relevant (skipped {skipped} non-device)")
 
     if not all_new:
         print("No records crawled today — no email sent.")
