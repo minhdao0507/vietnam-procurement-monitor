@@ -993,8 +993,29 @@ def run(do_send_email=True):
         print("Nothing new — no email sent.")
         return True
 
-    to_analyze = [r for r in all_new if (_days_left(r.get("bidCloseDate")) or -1) >= 0]
-    print(f"Analyzing with Gemini ({len(to_analyze)} active bids, skipping {len(all_new)-len(to_analyze)} expired)...")
+    # Filter: chỉ Gemini-analyze bids IT-relevant (HH+HON_HOP crawl lấy tất cả hàng hóa,
+    # cần loại bỏ thuốc, thực phẩm, vật tư y tế, xăng dầu, v.v.)
+    TECH_KW = [
+        "máy tính", "laptop", "máy tính xách tay", "máy vi tính",
+        "máy tính bảng", "tablet", "ipad", "iphone", "macbook", "apple",
+        "imac", "mac mini", "mac pro", "mac studio",
+        "điện thoại thông minh", "smartphone", "điện thoại di động",
+        "thiết bị cntt", "thiết bị công nghệ thông tin", "thiết bị it",
+        "máy tính để bàn", "all-in-one", "workstation", "máy trạm",
+        "server", "máy chủ", "switch", "router", "thiết bị mạng",
+        "máy in", "máy scan", "scanner", "màn hình", "monitor",
+        "camera", "ups", "storage", "lưu trữ",
+    ]
+    def _is_tech(bid_name):
+        n = bid_name.lower()
+        return any(k in n for k in TECH_KW)
+
+    active_all  = [r for r in all_new if (_days_left(r.get("bidCloseDate")) or -1) >= 0]
+    to_analyze  = [r for r in active_all if _is_tech(r.get("bid_name", ""))]
+    skipped_exp = len(all_new) - len(active_all)
+    skipped_non = len(active_all) - len(to_analyze)
+    print(f"Analyzing with Gemini: {len(to_analyze)} IT-relevant active bids "
+          f"(skipped {skipped_exp} expired, {skipped_non} non-IT)")
     client = genai.Client(api_key=GEMINI_API_KEY)
     quota_hit = False
     for i, record in enumerate(to_analyze):
