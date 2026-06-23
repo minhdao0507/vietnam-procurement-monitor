@@ -1316,7 +1316,7 @@ footer {{
 <section id="s2">
   <div class="section-label">02 · Act Two — The Market Structure</div>
   <p class="section-headline">The market runs two parallel games — and Apple can win both, with the right playbook for each.</p>
-  <p style="font-size:16px;color:var(--text2);margin-top:-32px;margin-bottom:48px;max-width:720px;line-height:1.6">Awarded contracts on muasamcong break down into two competitive channels: <b>{d['open_bid_pct']}%</b> Đấu thầu rộng rãi (open competitive bidding) and <b>{d['chct_pct']}%</b> Chào hàng cạnh tranh (competitive shopping — simplified 3-vendor quotes). Chỉ định thầu (direct appointment) does not appear on this portal by design — it bypasses competitive process entirely.</p>
+  <p style="font-size:16px;color:var(--text2);margin-top:-32px;margin-bottom:48px;max-width:720px;line-height:1.6">muasamcong covers competitive procurement only. Awarded contracts break down into: <b>{d['open_bid_pct']}%</b> Đấu thầu rộng rãi / Hạn chế (open &amp; restricted competitive bidding — DTRR/HCQT) and <b>{d['chct_pct']}%</b> Chào hàng cạnh tranh (competitive shopping — CHCT/CHCTRG, simplified 3-vendor quotes). Chỉ định thầu and Mua sắm trực tiếp (direct/non-competitive forms) do not appear here — they bypass the portal entirely.</p>
 
   <div class="chart-container">
     <div class="chart-title">Market Funnel — From Total Tech Spend to Apple Addressable</div>
