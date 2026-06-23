@@ -1316,7 +1316,7 @@ footer {{
 <section id="s2">
   <div class="section-label">02 · Act Two — The Market Structure</div>
   <p class="section-headline">The market runs two parallel games — and Apple can win both, with the right playbook for each.</p>
-  <p style="font-size:16px;color:var(--text2);margin-top:-32px;margin-bottom:48px;max-width:720px;line-height:1.6">Awarded contracts in this dataset break down into three procurement channels: <b>{d['open_bid_pct']}%</b> Đấu thầu rộng rãi (open competitive bidding), <b>{d['chct_pct']}%</b> Chào hàng cạnh tranh (competitive shopping — simplified 3-vendor quotes), and <b>{d['cdnt_pct']}%</b> Chỉ định thầu / Mua sắm trực tiếp (direct appointment). Each requires a different approach.</p>
+  <p style="font-size:16px;color:var(--text2);margin-top:-32px;margin-bottom:48px;max-width:720px;line-height:1.6">Awarded contracts on muasamcong break down into two competitive channels: <b>{d['open_bid_pct']}%</b> Đấu thầu rộng rãi (open competitive bidding) and <b>{d['chct_pct']}%</b> Chào hàng cạnh tranh (competitive shopping — simplified 3-vendor quotes). Chỉ định thầu (direct appointment) does not appear on this portal by design — it bypasses competitive process entirely.</p>
 
   <div class="chart-container">
     <div class="chart-title">Market Funnel — From Total Tech Spend to Apple Addressable</div>
@@ -1328,8 +1328,6 @@ footer {{
     <strong>Đấu thầu rộng rãi — Open Bidding ({d['open_bid_pct']}%):</strong> Full competitive tender open to any qualified vendor. Published RFP, technical evaluation, scored proposal. Largest contracts. Apple enters here through any authorized reseller — FPT IS is already positioned.
     <br><br>
     <strong>Chào hàng cạnh tranh — Competitive Shopping ({d['chct_pct']}%):</strong> Simplified competitive process — 3 vendors submit quotes. Still competitive, not appointed. Smaller contracts, faster cycle. Apple wins here when a trusted reseller with an existing relationship is one of the 3 invitees.
-    <br><br>
-    <strong>Chỉ định thầu — Direct Appointment ({d['cdnt_pct']}%):</strong> Single vendor selected without competition. These contracts are locked — Apple's play is long-term relationship building to be named in future direct appointment cycles.
   </div>
 
   <div class="stat-row">
@@ -1427,7 +1425,7 @@ footer {{
 <section id="s5">
   <div class="section-label">05 · Act Five — The Competitive Map</div>
   <p class="section-headline">"1,331 vendors in this market. Three ways to win. Only one is compatible with Apple."</p>
-  <p style="font-size:16px;color:var(--text2);margin-top:-32px;margin-bottom:48px;max-width:720px;line-height:1.6">The bubble chart maps every vendor by how they compete: direct appointment, price cuts, or open technical merit. Three archetypes emerge — and only one points toward Apple.</p>
+  <p style="font-size:16px;color:var(--text2);margin-top:-32px;margin-bottom:48px;max-width:720px;line-height:1.6">The bubble chart maps every vendor by how they win: through existing relationships (CHCT — invited to quote), price aggression (lowest bid), or open technical merit (DTRR). Three archetypes emerge — and only one is compatible with Apple.</p>
 
   <div class="chart-container">
     <div class="chart-title">Channel Landscape — Vendor Competitiveness vs. Contract Wins</div>
@@ -1464,7 +1462,7 @@ footer {{
       <div class="archetype-title">Technical Capability</div>
       <div class="archetype-examples">Sun Viet, FPT Information Systems, ƯKTS</div>
       <div class="archetype-stat">{next((v['open_pct'] for v in d['channel_vendors'] if v['name']=='Sun Viet'), '—')}%</div>
-      <div class="archetype-desc">of Sun Viet wins via open bidding (Đấu thầu rộng rãi). They win on technical merit in full competitive tenders — not through relationships or price discounting. CDNT (direct appointment) rate: {next((v['cdnt_pct'] for v in d['channel_vendors'] if v['name']=='Sun Viet'), '—')}%.</div>
+      <div class="archetype-desc">of SVTech wins via open bidding (Đấu thầu rộng rãi). They win on technical merit in full competitive tenders — not through relationships or price discounting.</div>
       <div class="archetype-fit fit-yes">
         <div class="fit-icon fit-icon-yes">✓</div>
         Apple's primary channel. These vendors win on merit — Apple products strengthen their technical proposal, not weaken it.
