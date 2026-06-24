@@ -26,9 +26,8 @@ except ImportError:
 
 CONFIG_FILE = Path(__file__).parent / "apple_monitor_config.py"
 PORTAL_URL  = "https://muasamcong.mpi.gov.vn/web/guest/contractor-selection?render=index"
-# JSESSIONID is from an authenticated browser session — never overwrite automatically.
-# Only refresh it manually when goods endpoint stops returning data.
-STABLE_COOKIES = {"NSC_WT_QSE_QPSUBM_NTD_NQJ", "JSESSIONID", "LFR_SESSION_STATE_20103"}
+# Cookies Playwright sẽ cập nhật khi refresh (session pair phải consistent)
+STABLE_COOKIES = {"NSC_WT_QSE_QPSUBM_NTD_NQJ"}  # chỉ giữ NSC (load balancer cookie)
 
 
 async def _capture(timeout_ms: int = 40_000) -> dict:
@@ -121,14 +120,21 @@ async def _capture(timeout_ms: int = 40_000) -> dict:
 def _patch_config(token: str, cookies: dict) -> None:
     text = CONFIG_FILE.read_text(encoding="utf-8")
 
-    # Rebuild the API_TOKEN block split into ~80-char quoted chunks
-    chunk_size = 80
-    chunks = [token[i : i + chunk_size] for i in range(0, len(token), chunk_size)]
-    inner = "\n    ".join(f'"{c}"' for c in chunks)
-    new_block = f"API_TOKEN = (\n    {inner}\n)"
-    text = re.sub(r"API_TOKEN\s*=\s*\([^)]+\)", new_block, text, flags=re.DOTALL)
+    # Rebuild the API_TOKEN line
+    text = re.sub(r'API_TOKEN\s*=\s*"[^"]*"', f'API_TOKEN = "{token}"', text)
+    # Also handle multi-line tuple form if present
+    text = re.sub(r"API_TOKEN\s*=\s*\([^)]+\)", f'API_TOKEN = "{token}"', text, flags=re.DOTALL)
 
-    # Update only analytics/non-auth cookies (JSESSIONID preserved — see STABLE_COOKIES)
+    # Update session cookies (JSESSIONID + LFR must be consistent with the token)
+    updatable = {k: v for k, v in cookies.items() if k not in STABLE_COOKIES and v}
+    if updatable:
+        # Rebuild API_COOKIES block
+        cookie_lines = "\n".join(
+            f'    "{k}": "{v}",' for k, v in updatable.items()
+        )
+        new_cookies = f"API_COOKIES = {{\n{cookie_lines}\n}}"
+        text = re.sub(r"API_COOKIES\s*=\s*\{[^}]*\}", new_cookies, text, flags=re.DOTALL)
+        print(f"  Session cookies updated: {list(updatable.keys())}")
 
     CONFIG_FILE.write_text(text, encoding="utf-8")
     print(f"  Config patched: {CONFIG_FILE.name}")
