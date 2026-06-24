@@ -1187,7 +1187,7 @@ footer {{
 
 .story-map {{
   position: sticky;
-  top: 48px;
+  top: 0;
   z-index: 99;
   background: white;
   border-bottom: 1px solid #D2D2D7;
@@ -1240,20 +1240,6 @@ footer {{
 </style>
 </head>
 <body>
-
-<nav>
-  <a href="#s1">The Opportunity</a>
-  <a href="#s2">Market Structure</a>
-  <a href="#s3">Who's Winning</a>
-  <a href="#s4">The Gap</a>
-  <a href="#s5">Channel</a>
-  <a href="#s6">Why Vendors Win</a>
-  <a href="#s7">Quick Wins</a>
-  <a href="#s7b">Action Plan</a>
-  <a href="#s8fptis">FPT IS Deals</a>
-  <a href="#s8">Evidence Base</a>
-  <a href="#s9">Glossary</a>
-</nav>
 
 <div class="story-map">
   <a href="#s0" class="story-pill active">★ What to do now</a>
