@@ -14,6 +14,10 @@ jobs:
   crawl:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      GMAIL_APP_PASSWORD:          ${{ secrets.GMAIL_APP_PASSWORD }}
+      GEMINI_API_KEY:              ${{ secrets.GEMINI_API_KEY }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
 
     steps:
       - uses: actions/checkout@v4
