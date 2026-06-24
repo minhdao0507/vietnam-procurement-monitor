@@ -39,11 +39,16 @@ from googleapiclient.http import MediaIoBaseUpload
 urllib3.disable_warnings()
 
 # Strip XML-illegal control characters that openpyxl rejects
-_ILLEGAL_CHARS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F￾￿]")
+_ILLEGAL_CHARS   = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F￾￿]")
+# Characters that trigger formula/DDE injection in Excel when leading a cell
+_FORMULA_LEADERS = frozenset(("=", "+", "-", "@", "\t", "\r"))
 
 def _clean(val):
     if isinstance(val, str):
-        return _ILLEGAL_CHARS.sub("", val)
+        val = _ILLEGAL_CHARS.sub("", val)
+        if val and val[0] in _FORMULA_LEADERS:
+            val = " " + val  # prepend space — Excel treats as plain text
+        return val
     return val
 
 if sys.platform == "win32":
@@ -51,9 +56,9 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from apple_monitor_config import (
-    KEYWORDS,
+    INVEST_FIELDS,
     GMAIL_SENDER, GMAIL_APP_PASSWORD, EMAIL_RECIPIENTS,
-    GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_FILE,
+    GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_DICT,
     GEMINI_API_KEY,
     API_TOKEN, API_COOKIES,
 )
@@ -122,26 +127,35 @@ def make_session():
     return s
 
 
-def _build_payload(page_number, page_size, keyword):
+def _build_payload(page_number, page_size, invest_fields=None, since_date=None):
+    """
+    since_date: "YYYY-MM-DD" — chỉ lấy bids publicDate >= since_date.
+    Dùng cho daily incremental crawl để tránh crawl toàn bộ lịch sử.
+    """
+    if invest_fields is None:
+        invest_fields = INVEST_FIELDS
+    filters = [
+        {"fieldName": "investField", "searchType": "in",     "fieldValues": invest_fields},
+        {"fieldName": "type",        "searchType": "in",     "fieldValues": ["es-notify-contractor"]},
+        {"fieldName": "caseKHKQ",    "searchType": "not_in", "fieldValues": ["1"]},
+    ]
+    if since_date:
+        filters.append({"fieldName": "publicDate", "searchType": "gte", "fieldValues": [since_date]})
     return [{
         "pageSize": page_size,
-        "pageNumber": page_number,
+        "pageNumber": str(page_number),
         "query": [{
             "index": "es-contractor-selection",
-            "keyWord": keyword,
             "matchType": "all-1",
             "matchFields": ["notifyNo", "bidName"],
-            "filters": [
-                {"fieldName": "type",     "searchType": "in",     "fieldValues": ["es-notify-contractor"]},
-                {"fieldName": "caseKHKQ", "searchType": "not_in", "fieldValues": ["1"]},
-            ],
+            "filters": filters,
         }],
     }]
 
 
-def _fetch_page(session, page_number, keyword, page_size=PAGE_SIZE):
+def _fetch_page(session, page_number, invest_fields=None, page_size=PAGE_SIZE, since_date=None):
     url = f"{BASE_URL}{API_PATH}?token={API_TOKEN}"
-    payload = _build_payload(page_number, page_size, keyword)
+    payload = _build_payload(page_number, page_size, invest_fields, since_date)
     for attempt in range(3):
         try:
             resp = session.post(url, headers=HEADERS, json=payload, verify=False, timeout=20)
@@ -162,20 +176,31 @@ def _fetch_page(session, page_number, keyword, page_size=PAGE_SIZE):
     return None
 
 
-def crawl_keyword(session, keyword):
-    data = _fetch_page(session, 0, keyword)
+def crawl_categories(session, invest_fields=None, since_date=None, max_pages=40):
+    """
+    Crawl by investField category instead of keyword.
+    since_date: "YYYY-MM-DD" — filter bids publicDate >= since_date (nếu portal hỗ trợ).
+    max_pages: giới hạn số trang để tránh timeout và IP block. Default=40 (~2000 bids).
+    """
+    if invest_fields is None:
+        invest_fields = INVEST_FIELDS
+    label = "+".join(invest_fields)
+    date_note = f" since {since_date}" if since_date else ""
+
+    data = _fetch_page(session, 0, invest_fields, since_date=since_date)
     if not data:
         return []
 
     page_obj      = data.get("page", data)
-    total_pages   = page_obj.get("totalPages", 1)
+    total_pages   = min(page_obj.get("totalPages", 1), max_pages)
     total_records = page_obj.get("totalElements", 0)
-    print(f"    '{keyword}': {total_records:,} records ({total_pages} pages)")
+    capped = " (capped)" if page_obj.get("totalPages", 1) > max_pages else ""
+    print(f"    [{label}]{date_note}: {total_records:,} records — crawling {total_pages} pages{capped}")
 
     all_items = list(data.get("content") or data.get("page", {}).get("content", []))
 
     for page_num in range(1, total_pages):
-        page_data = _fetch_page(session, page_num, keyword)
+        page_data = _fetch_page(session, page_num, invest_fields, since_date=since_date)
         if not page_data:
             break
         content = page_data.get("content") or page_data.get("page", {}).get("content", [])
@@ -217,7 +242,7 @@ def _build_source_url(item):
     return f"{BASE_URL}/web/guest/contractor-selection?{params}"
 
 
-def flatten(item, keyword):
+def flatten(item, keyword="HH"):
     locs      = item.get("locations") or []
     first_loc = locs[0] if locs else {}
     bid_name  = item.get("bidName", "")
@@ -261,7 +286,7 @@ def connect_sheet():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    creds = Credentials.from_service_account_file(GOOGLE_CREDENTIALS_FILE, scopes=scopes)
+    creds = Credentials.from_service_account_info(GOOGLE_CREDENTIALS_DICT, scopes=scopes)
     gc    = gspread.authorize(creds)
     sh    = gc.open_by_key(GOOGLE_SHEET_ID)
     try:
@@ -733,8 +758,8 @@ def _create_goods_excel(items, bid_name, notify_no, winner=""):
 
 
 def _upload_to_drive(xlsx_bytes, filename):
-    creds   = Credentials.from_service_account_file(
-        GOOGLE_CREDENTIALS_FILE,
+    creds   = Credentials.from_service_account_info(
+        GOOGLE_CREDENTIALS_DICT,
         scopes=["https://www.googleapis.com/auth/drive"]
     )
     service = _drive_build("drive", "v3", credentials=creds, cache_discovery=False)
@@ -945,15 +970,18 @@ def run(do_send_email=True):
     all_new  = []
     seen_ids = set(existing_ids)
 
-    print("Crawling keywords...")
-    for keyword in KEYWORDS:
-        items = crawl_keyword(session, keyword)
-        for item in items:
-            record = flatten(item, keyword)
-            nid    = record["notifyId"]
-            if nid and nid not in seen_ids:
-                all_new.append(record)
-                seen_ids.add(nid)
+    # max_pages=40 → tối đa 2000 bids/run, ~90s, an toàn cho GitHub Actions timeout 30min
+    print(f"Crawling categories: {INVEST_FIELDS} (max 40 pages) ...")
+    items = crawl_categories(session, INVEST_FIELDS, max_pages=40)
+    for item in items:
+        invest_field = item.get("investField", "HH")
+        if isinstance(invest_field, list):
+            invest_field = invest_field[0] if invest_field else "HH"
+        record = flatten(item, invest_field)
+        nid    = record["notifyId"]
+        if nid and nid not in seen_ids:
+            all_new.append(record)
+            seen_ids.add(nid)
 
     print(f"\n→ {len(all_new)} new records found\n")
 
@@ -965,8 +993,29 @@ def run(do_send_email=True):
         print("Nothing new — no email sent.")
         return True
 
-    to_analyze = [r for r in all_new if (_days_left(r.get("bidCloseDate")) or -1) >= 0]
-    print(f"Analyzing with Gemini ({len(to_analyze)} active bids, skipping {len(all_new)-len(to_analyze)} expired)...")
+    # Filter: chỉ Gemini-analyze bids IT-relevant (HH+HON_HOP crawl lấy tất cả hàng hóa,
+    # cần loại bỏ thuốc, thực phẩm, vật tư y tế, xăng dầu, v.v.)
+    TECH_KW = [
+        "máy tính", "laptop", "máy tính xách tay", "máy vi tính",
+        "máy tính bảng", "tablet", "ipad", "iphone", "macbook", "apple",
+        "imac", "mac mini", "mac pro", "mac studio",
+        "điện thoại thông minh", "smartphone", "điện thoại di động",
+        "thiết bị cntt", "thiết bị công nghệ thông tin", "thiết bị it",
+        "máy tính để bàn", "all-in-one", "workstation", "máy trạm",
+        "server", "máy chủ", "switch", "router", "thiết bị mạng",
+        "máy in", "máy scan", "scanner", "màn hình", "monitor",
+        "camera", "ups", "storage", "lưu trữ",
+    ]
+    def _is_tech(bid_name):
+        n = bid_name.lower()
+        return any(k in n for k in TECH_KW)
+
+    active_all  = [r for r in all_new if (_days_left(r.get("bidCloseDate")) or -1) >= 0]
+    to_analyze  = [r for r in active_all if _is_tech(r.get("bid_name", ""))]
+    skipped_exp = len(all_new) - len(active_all)
+    skipped_non = len(active_all) - len(to_analyze)
+    print(f"Analyzing with Gemini: {len(to_analyze)} IT-relevant active bids "
+          f"(skipped {skipped_exp} expired, {skipped_non} non-IT)")
     client = genai.Client(api_key=GEMINI_API_KEY)
     quota_hit = False
     for i, record in enumerate(to_analyze):
@@ -985,8 +1034,14 @@ def run(do_send_email=True):
     if quota_hit:
         print("  Note: Quota exhausted. Pipeline continues — email & sheet will be sent with partial analysis.")
 
-    print("\nWriting to Google Sheet...")
-    append_to_sheet(ws, all_new)
+    # Only persist IT-relevant bids. HH+HON_HOP crawl returns all goods (drugs,
+    # food, fuel, medical supplies...) — non-IT rows are pure noise downstream:
+    # monthly_report re-filters by the same TECH_KW (is_tech) and the daily email
+    # filters too. Storing them only bloats the Sheet (~2000/day). Keep expired
+    # tech bids though — historical awards drive the vendor/winner analysis.
+    tech_new = [r for r in all_new if _is_tech(r.get("bid_name", ""))]
+    print(f"\nWriting to Google Sheet... ({len(tech_new)} IT-relevant of {len(all_new)} new)")
+    append_to_sheet(ws, tech_new)
 
     print("Fetching full sheet for Excel export...")
     all_rows = ws.get_all_records(head=1)
@@ -995,11 +1050,11 @@ def run(do_send_email=True):
 
     if do_send_email:
         print("Sending email...")
-        send_email(all_new, all_sheet)
+        send_email(tech_new, all_sheet)
     else:
         print("Crawl-only mode — skipping email.")
 
-    print(f"\n✓ Done — {len(all_new)} new records processed.")
+    print(f"\n✓ Done — {len(tech_new)} IT-relevant of {len(all_new)} new records processed.")
 
 
 def run_test():
@@ -1076,8 +1131,26 @@ def send_only():
     print(f"  {len(all_sheet):,} total records in sheet")
 
     today = date.today().isoformat()
-    all_new = [r for r in all_sheet if r.get("crawled_at", "").startswith(today)]
-    print(f"  {len(all_new)} records crawled today")
+    crawled_today = [r for r in all_sheet if r.get("crawled_at", "").startswith(today)]
+
+    # Filter to Apple-relevant device bids only — email is for Apple team action
+    # Category crawl (HH+HON_HOP) ingests all goods; email shows only what a partner can propose Apple for
+    _APPLE_DEV_KW = [
+        "máy tính xách tay", "laptop", "máy vi tính xách tay",
+        "máy tính bảng", "tablet", "máy vi tính bảng",
+        "máy tính để bàn", "desktop", "máy vi tính để bàn", "all-in-one",
+        "điện thoại thông minh", "smartphone", "điện thoại di động",
+        "apple", "iphone", "ipad", "macbook", "imac", "mac pro",
+        "mac mini", "mac studio", "airpods",
+        "máy tính cá nhân", "máy vi tính",
+    ]
+    def _is_apple_relevant(bid_name):
+        n = bid_name.lower()
+        return any(k in n for k in _APPLE_DEV_KW)
+
+    all_new = [r for r in crawled_today if _is_apple_relevant(r.get("bid_name", ""))]
+    skipped = len(crawled_today) - len(all_new)
+    print(f"  {len(crawled_today)} crawled today → {len(all_new)} Apple-relevant (skipped {skipped} non-device)")
 
     if not all_new:
         print("No records crawled today — no email sent.")
